@@ -83,67 +83,88 @@ def get_bert_model(batch_size, vocab_size, max_length, max_epochs, **kwargs):
 
 
 if __name__ == "__main__":
+    import argparse
     from pytorch_lightning.loggers import TensorBoardLogger
-    from pytorch_lightning.callbacks import ModelCheckpoint
-
     from dataset.loader import get_loaders
 
-    use_clearml = True  # True = use clearML, False = dont use
-    continue_last_model = False  # True = use last model, need to set ckpt_path in section below, False = train model from zero
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="rnn",
+                        choices=["simple", "rnn", "lstm", "bert"])
+    parser.add_argument("--device", type=str, default="cpu",
+                        choices=["cpu", "cuda"])
+    parser.add_argument("--tokenizer_name", type=str,
+                        default="distilbert-base-uncased")
+    parser.add_argument("--eval_only", type=int, default=0)
+    args = parser.parse_args()
 
+    use_clearml = True
+    continue_last_model = False
+
+    project_name = "MDPI"
     if use_clearml:
         from clearml import Task
-        project_name = "MDPI"
+        from clearml.backend_api.session.defs import MissingConfigError
 
-    # Set seed
+    # Seed
     seed = 0
     pl.seed_everything(seed)
 
-    # Set params
+    # Params
     max_length = 110
     batch_size = 64
     max_epochs = 100
-    tokenizer_name = "distilbert-base-uncased"
+    tokenizer_name = args.tokenizer_name
 
     # Load data
-    train_loader, val_loader, test_loader, vocab_size = get_loaders("dataset/sentence/train.csv",
-                                                                    "dataset/sentence/val.csv",
-                                                                    "dataset/sentence/test.csv",
-                                                                    tokenizer_name=tokenizer_name,
-                                                                    batch_size=batch_size,
-                                                                    max_length=max_length)
+    train_loader, val_loader, test_loader, vocab_size = get_loaders(
+        "dataset/sentence/train.csv",
+        "dataset/sentence/val.csv",
+        "dataset/sentence/test.csv",
+        tokenizer_name=tokenizer_name,
+        batch_size=batch_size,
+        max_length=max_length
+    )
 
-    # Get model
-    model, tag = get_rnn_model(batch_size, vocab_size, max_length, max_epochs, tokenizer_name=tokenizer_name)
-    # model, tag = get_lstm_model(batch_size, vocab_size, max_length, max_epochs, tokenizer_name=tokenizer_name)
-    # model, tag = get_bert_model(batch_size, vocab_size, max_length, max_epochs, model_name=tokenizer_name)
+    # --------- MODEL SELECTION (THIS IS WHAT YOU ASKED) ----------
+    if args.model == "simple":
+        model, tag = get_simple_model(batch_size, vocab_size, max_length, max_epochs, tokenizer_name=tokenizer_name)
+    elif args.model == "rnn":
+        model, tag = get_rnn_model(batch_size, vocab_size, max_length, max_epochs, tokenizer_name=tokenizer_name)
+    elif args.model == "lstm":
+        model, tag = get_lstm_model(batch_size, vocab_size, max_length, max_epochs, tokenizer_name=tokenizer_name)
+    else:  # bert
+        model, tag = get_bert_model(batch_size, vocab_size, max_length, max_epochs, model_name=tokenizer_name)
+    # -------------------------------------------------------------
 
-    # Configure trainer
-    trainer = pl.Trainer(max_epochs=max_epochs, logger=TensorBoardLogger("./tb_logs", name=model.name))
+    # Trainer (force device choice)
+    accelerator = "gpu" if args.device == "cuda" else "cpu"
+    trainer = pl.Trainer(
+        max_epochs=max_epochs,
+        logger=TensorBoardLogger("./tb_logs", name=model.name),
+        accelerator=accelerator,
+        devices=1
+    )
+
+    # ClearML (optional)
     task = None
-if use_clearml:
-    try:
-        from clearml.backend_api.session.defs import MissingConfigError
-
-        task = Task.init(
-            project_name=project_name,
-            task_name=model.name,
-            tags=[tag],
-            continue_last_task=continue_last_model
-        )
-        task.set_model_config(config_text=str(model))
-
-    except MissingConfigError:
-        print("ClearML not configured, continuing without ClearML.")
-        task = None
-
-    # Train and test model
-    if not continue_last_model:
-        trainer.fit(model, train_loader,
-                    val_dataloaders=val_loader)  # , ckpt_path=r"<path-to-ckpt>"
-    else:
-        trainer.fit(model, train_loader, val_dataloaders=val_loader)  # , ckpt_path=r"<path-to-ckpt>"
-    trainer.test(model, test_loader, ckpt_path="best")
-
     if use_clearml:
+        try:
+            task = Task.init(
+                project_name=project_name,
+                task_name=model.name,
+                tags=[tag],
+                continue_last_task=continue_last_model
+            )
+            task.set_model_config(config_text=str(model))
+        except MissingConfigError:
+            print("ClearML not configured, continuing without ClearML.")
+            task = None
+
+    # Train + test
+    if not args.eval_only:
+        trainer.fit(model, train_loader, val_dataloaders=val_loader)
+
+    trainer.test(model, test_loader)
+
+    if task is not None:
         task.close()
