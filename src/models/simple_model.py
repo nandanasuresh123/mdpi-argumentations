@@ -1,7 +1,7 @@
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch.nn.functional as F
-from itmo_pirsii_2023_diploma.src.models.base_model import BaseClassifierModel
+from models.base_model import BaseClassifierModel
 
 
 class SimpleClassifier(BaseClassifierModel):

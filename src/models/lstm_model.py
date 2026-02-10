@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from itmo_pirsii_2023_diploma.src.models.base_model import BaseClassifierModel
+from models.base_model import BaseClassifierModel
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
 
